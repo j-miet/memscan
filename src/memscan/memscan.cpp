@@ -7,8 +7,8 @@ How to run:
 - get a process id with 'tasklist' command, then run application with
     mescan process_id OR ./memscan process_id
 
-Currently:
-- can access process memory and read information:
+Implemented:
+- can access process memory address:
   - creates a scanner which takes process id and collects all of its memory data into MemBlock structs
   - blocks form a linked list structure which allows easy iteration; they include both a reference to base
   address (process memory) and to local address (temporary buffer)
@@ -16,6 +16,7 @@ Currently:
   - then frees all memory allocated from calling malloc inside MemBlocks
 
 TODO:
+- read process memory from an address
 - write process data into local buffer
 - write data back into process memory base address
 - possibly add a Gui (library will be decided later)
@@ -29,21 +30,38 @@ Lots and lots of comments to help learn and recall stuff. Most of these will be 
 #include <processthreadsapi.h>
 #include <winerror.h>
 #include <winnt.h>
+//#include <bitset>
+
+
+// macros for searching memory; first checks if offset value is in mask, second updates mask to exclude offset value
+#define IS_IN_SEARCH(mb,offset) (mb->searchMask[(offset)/8] & (1<<(offset)&8))
+#define REMOVE_FROM_SEARCH(mb,offset) (mb->searchMask[(offset)/8] &= ~(1<<(offset)%8)); // ~ is bitwise NOT/complement
 
 /// @brief A single block of memory
 typedef struct MemBlock {
     HANDLE pHandle; // process handle; which process uses this piece of memory
-    unsigned char* addr; // base address
+    unsigned char* addr; // base address: where process stores memory
     int size; // memory size
-    unsigned char* buffer; // local address to copy and store data
-    struct MemBlock* next; // pointer to next block memory; thus MemBlocks form a linked list
+    unsigned char* buffer; // local address: read data from base addr, manipulate it, then write it back to base addr
+    unsigned char* searchMask; // mask where each bit is 1 for matching byte in buffer and 0 otherwise
+    int matches; // number of matched bytes
+    int dataSize; // on what basis are search comparisons done (1 for uchar, 2 for ushort, 4 for ulong)
+    struct MemBlock* next; // pointer to next block memory i.e. next node of linked list
 } MemBlock; 
+
+typedef enum Cond{
+    COND_UNCONDITIONAL, // everything is accepted, default setting
+    COND_EQUALS, // search matches particular value
+
+    COND_INCREASED, // include byte if its value has increase from last search
+    COND_DECREASED, // same as above, but value has decreased
+} SEARCH_CONDITION;
 
 /// @brief Create a local memory block for a process
 /// @param hProc Process handle
-/// @param memInfo Stored memory information
+/// @param memInfo Internal information of base block
 /// @return Pointer to memory block
-MemBlock* createMemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo) {
+MemBlock* createMemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo, int dataSize) {
     MemBlock* mb = (MemBlock*) malloc (sizeof(MemBlock));
 
     if (mb) {
@@ -51,6 +69,10 @@ MemBlock* createMemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo) {
         mb->addr = (unsigned char*) memInfo->BaseAddress;
         mb->size = memInfo->RegionSize;
         mb->buffer = (unsigned char*) malloc(memInfo->RegionSize); // allocate space for memInfo
+        mb->searchMask = (unsigned char*) malloc(memInfo->RegionSize/8);
+        memset(mb->searchMask, 0xff, memInfo->RegionSize/8); // 0xff is equal to 1111 1111 in binary
+        mb->matches = memInfo->RegionSize; // initially search for every byte i.e. match to entire buffer
+        mb->dataSize = dataSize;
         mb->next = NULL;
     }
     return mb;
@@ -63,14 +85,71 @@ void freeMemBlock(MemBlock* mb) {
         if (mb->buffer) {
             free(mb->buffer);
         }
+
+        if (mb->searchMask) {
+            free(mb->searchMask);
+        }
         free(mb);
     }
 }
 
+/// @brief Read information into memory block buffer
+/// @param mb Block address 
+/// @param condition Search condition
+/// @param val Comparison value when condition is COND_EQUALS
+void updateMemBlock(MemBlock* mb, SEARCH_CONDITION condition, unsigned int val) {
+    static unsigned char tempBuf[128*1024]; // byte buffer; 1024 bits = 128 bytes
+    unsigned int bytesLeft;  // how many bytes left to read in total
+    unsigned int totalRead; // how many read so far in total
+    unsigned int bytesToRead; // number of bytes to be read
+    unsigned int bytesRead; // actual bytes read
+
+    bytesLeft = mb->size; // how many bytes left to read, initially full size
+    totalRead = 0;
+    mb->matches = 0; // reset matches
+
+    while(bytesLeft) {
+        bytesToRead = (bytesLeft > std::size(tempBuf)) ? std::size(tempBuf) : bytesLeft;
+        // I have no idea what happens here, but still managed to fix the issue:
+        // - after running ReadProcessMemory, bytesToRead resets to 0 for some reason: only tempBuf and &bytesRead 
+        // contents should be modified so what's going on here.
+        // - In order to fix this, I would assign a variable 'a' as placeholder, insert bytesToRead value inside it then
+        // use it afterwards. Turns out, 'a' is not needed directly, only declaring it fixed the issue. 
+        // Yeah... at least it works now, even if it doesn't make sense.
+        unsigned int a = bytesToRead;
+        ReadProcessMemory(mb->pHandle, mb->addr + totalRead, tempBuf, bytesToRead, (SIZE_T*) &bytesRead);
+        if (bytesRead != bytesToRead) {
+            // if byte count differs from buffer size
+            break;
+        }
+        if (condition == COND_UNCONDITIONAL) {
+            // no comparison required
+            // set start index based on totalRead (byte-normalized), write 1s by amount of bytesRead (again normalized)
+            memset(mb->searchMask + (totalRead/8), 0xff, bytesRead/8);
+            mb->matches += bytesRead;
+        } else {
+            //TODO implement conditional case
+            -1;
+
+        }
+        // copy tempBuf data of size bytesRead into MemBlock buffer
+        //
+        // why read memory into tempBuf and immediately copy it to MemBlock buffer, instead of just copy it to MemBlock
+        // straight away?
+        // It creates an intermediary state which allows comparing current buffer data with previously stored buffer
+        memcpy(mb->buffer + totalRead, tempBuf, bytesRead);
+
+        bytesLeft -= bytesRead;
+        totalRead += bytesRead;
+    }
+
+    mb->size = totalRead; // update size to match total amount of bytes read and to flag rest of buffer as invalid
+}
+
 /// @brief Scan and access the linked list of external memory blocks
-/// @param processId process id
-/// @return pointer to head of linked list 
-MemBlock* createScan(unsigned int processId) {
+/// @param processId Process id
+/// @return Pointer to head of linked list 
+MemBlock* createScan(unsigned int processId, int dataSize) {
     MemBlock* mbLinked = nullptr;
     MEMORY_BASIC_INFORMATION memInfo; // info of current memory chunk
     unsigned char *addr = 0; // virtual query tracking address; starting from lowest value 0 is important because
@@ -100,7 +179,7 @@ MemBlock* createScan(unsigned int processId) {
             // Finally, bitwise AND operator is used to apply a masking in order to match to desired values
             #define WRITABLE (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)
             if ((memInfo.State & MEM_COMMIT) && (memInfo.Protect & WRITABLE)) {
-                MemBlock* mb = createMemBlock(pHandle, &memInfo);
+                MemBlock* mb = createMemBlock(pHandle, &memInfo, dataSize);
                 if (mb) {
                     // add a node to linked list
                     mb->next = mbLinked;
@@ -116,7 +195,7 @@ MemBlock* createScan(unsigned int processId) {
 };
 
 /// @brief Free allocated memory of scan list
-/// @param mbLinked Linked list i.e. pointer to head node
+/// @param mbLinked Linked list head
 void freeScan (MemBlock* mbLinked) {
     CloseHandle(mbLinked->pHandle); // close the process
 
@@ -127,21 +206,45 @@ void freeScan (MemBlock* mbLinked) {
     }
 }
 
+/// @brief Updates all memory blocks
+/// @param mbLinked Linked list head
+void updateScan(MemBlock* mbLinked) {
+    MemBlock* mb = mbLinked;
+    while(mb) {
+        updateMemBlock(mb, COND_UNCONDITIONAL, 4); // temp values
+        mb = mb->next;
+    }
+}
+
 /// @brief Print info of accessed memory blocks
-/// @param mbLinked Linked list
+/// @param mbLinked Linked list head
 void dumpScanInfo(MemBlock *mbLinked) {
     MemBlock* mb = mbLinked;
     
     while (mb) {
         //printf("0x%08x %d\r\n", mb->addr, mb->size); // C printf to test and compare
+        // print memory addresses and their sizes
         std::cout << "0x" << std::hex << (long long)(mb->addr) << std::dec << " " << mb->size << "\r\n";
+
+        // uncomment this to test output (remember to also uncomment #include <bitset>)
+        // it will print buffer contents in binary, and might take a while to finish!
+        /*
+        int i;
+        for (i = 0; i< mb->size; i++) {
+            // print buffer contents
+            std::cout << std::bitset<32>(mb->buffer[i]);
+        }
+        std::cout << "\r\n";
+        */
+
         mb = mb->next;
     }
 }
 
 int main(int argc, char *argv[]) {
-    MemBlock* scan = createScan(atoi(argv[1]));
+    MemBlock* scan = createScan(atoi(argv[1]), 4); // data size 4 bytes; other possible values are 1 or 2
     if (scan) {
+        updateScan(scan);
         dumpScanInfo(scan);
         freeScan(scan);
     }
