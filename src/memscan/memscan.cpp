@@ -157,18 +157,23 @@ void updateMemBlock(MemBlock* mb,
                     {   // totalRead+offset is the overall offset
                         BOOL isMatch = FALSE;
                         unsigned int tempVal;
+                        unsigned int prevVal = 0; // previous tempVal
 
                         switch (mb->dataSize)
                         {
                             case 1: // byte (unsigned char)
                                 tempVal = tempBuf[offset];
+                                // buffer offset before copying new value into it
+                                prevVal = *((unsigned char*)&mb->buffer[totalRead+offset]);
                                 break;
                             case 2: // 2 bytes (unsigned short)
                                 tempVal = *((unsigned short*)&tempBuf[offset]);
+                                prevVal = *((unsigned short*)&mb->buffer[totalRead+offset]);
                                 break;
                             case 4: // 4 bytes (unsigned int)
                             default:
                                 tempVal = *((unsigned int*)&tempBuf[offset]);
+                                prevVal = *((unsigned int*)&mb->buffer[totalRead+offset]);
                                 break;
                         }
                         
@@ -176,6 +181,12 @@ void updateMemBlock(MemBlock* mb,
                         {
                             case COND_EQUALS: // match to passed argument 'val'
                                 isMatch = (tempVal == val);
+                                break;
+                            case COND_INCREASED:
+                                isMatch = (tempVal > prevVal);
+                                break;
+                            case COND_DECREASED:
+                                isMatch = (tempVal < prevVal);
                                 break;
                             default:
                                 break;
@@ -302,7 +313,7 @@ void dumpScanInfo(MemBlock* mbLinked)
     {
         //printf("0x%08x %d\r\n", mb->addr, mb->size); // C printf to test and compare
         // print memory addresses and their sizes
-        std::cout << "0x" << std::hex << (long long)(mb->addr) << std::dec << " " << mb->size << "\r\n";
+        std::cout << "0x" << std::hex << (intptr_t)(mb->addr) << std::dec << " " << mb->size << "\r\n";
 
         // uncomment this to test output (remember to also uncomment #include <bitset>)
         // it will print buffer contents in binary, and might take a while to finish!
@@ -378,8 +389,8 @@ int main(int argc, char* argv[])
         // then apply a new search to previously found addresses; this might return nothing because it's unlikely that
         // the process suddenly changed existing register values between reads 
         // e.g. open notepad.exe -> read memory - do nothing -> read again
-        std::cout << "searching for 2000\r\n";
-        updateScan(scan, COND_EQUALS, 2000);
+        std::cout << "searching for decreassed\r\n";
+        updateScan(scan, COND_DECREASED, 0);
         printMatches(scan);
         //dumpScanInfo(scan);
 
