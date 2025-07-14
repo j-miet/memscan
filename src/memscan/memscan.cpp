@@ -313,7 +313,7 @@ void dumpScanInfo(MemBlock* mbLinked)
     {
         //printf("0x%08x %d\r\n", mb->addr, mb->size); // C printf to test and compare
         // print memory addresses and their sizes
-        std::cout << "0x" << std::hex << (intptr_t)(mb->addr) << std::dec << " " << mb->size << "\r\n";
+        std::cout << "0x" << std::hex << (unsigned char*)(mb->addr) << std::dec << " " << mb->size << "\r\n";
 
         // uncomment this to test output (remember to also uncomment #include <bitset>)
         // it will print buffer contents in binary, and might take a while to finish!
@@ -330,6 +330,36 @@ void dumpScanInfo(MemBlock* mbLinked)
     }
 }
 
+/// @brief Write into a memory location
+/// @param pHandle Process handle
+/// @param dataSize Data unit size
+/// @param addr Base address
+/// @param val New value
+void poke(HANDLE pHandle, int dataSize, unsigned int* addr, unsigned int val)
+{
+    if (WriteProcessMemory(pHandle, addr, &val, dataSize, NULL) == 0)
+    {
+        std::cout << "poke failed\r\n";
+    }
+}
+
+/// @brief Read a memory location
+/// @param pHandle Process handle
+/// @param dataSize Data unit size
+/// @param addr Base address
+/// @return Value stored in base address
+unsigned int peek(HANDLE pHandle, int dataSize, unsigned char* addr)
+{
+    unsigned int val = 0;
+
+    if (ReadProcessMemory(pHandle, addr, &val, dataSize, NULL) == 0)
+    {
+        std::cout << "peek failed\r\n";
+    }
+
+    return val;
+}
+
 /// @brief Print search matches
 /// @param mbLinked Linked list head
 void printMatches(MemBlock* mbLinked) 
@@ -343,8 +373,11 @@ void printMatches(MemBlock* mbLinked)
         {
             if (IS_IN_SEARCH(mb, offset)) 
             {
-                std::cout << "0x" << std::hex << (long long)(mb->addr) + offset << std::dec;
-                std::cout << " " << mb->size << "\r\n"; 
+                // prints address with its value. Value is displayed both in hex and decimal format
+                unsigned int val = peek(mb->pHandle, mb->dataSize, (unsigned char*) mb->addr + offset);
+                std::cout << "0x" << std::hex << (intptr_t)(mb->addr) + offset << std::dec << ": ";
+                std::cout << "0x" << std::hex << val << std::dec << " ";
+                std::cout << val << " " << mb->size << "\r\n"; 
             }
         }
 
