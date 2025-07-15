@@ -1,26 +1,9 @@
 /* Memory scanner in C++ (in progress)
 Based on a youtube tutorial written in C (https://www.youtube.com/watch?v=YRPMdb1YMS8&list=WL; has total of 8 parts)
 
-How to run:
-- compile code with g++: 
-    g++ -o memscan memscan.cpp
-- get a process id with 'tasklist' command, then run application with
-    mescan process_id OR ./memscan process_id
-
-Implemented:
-- can access process memory address:
-  - creates a scanner which takes process id and collects all of its memory data into MemBlock structs
-  - blocks form a linked list structure which allows easy iteration; they include both a reference to base
-  address (process memory) and to local address (temporary buffer)
-  - prints addresses and byte sizes of each accessed block
-  - then frees all memory allocated from calling malloc inside MemBlocks
-
-- read process memory from an address by applying a search mask
-- write process data into local buffer
-
 TODO:
-- write data back into process memory base address
-- possibly add a Gui (library will be decided later)
+- memscan is fully done. Now change code into C++ style
+- add a Gui (library will be decided later)
 
 Lots and lots of comments to help learn and recall stuff. Most of these will be removed later.
 */
@@ -54,7 +37,6 @@ typedef enum Cond
 {
     COND_UNCONDITIONAL, // everything is accepted, default setting
     COND_EQUALS, // search matches particular value
-
     COND_INCREASED, // include byte if its value has increase from last search
     COND_DECREASED, // same as above, but value has decreased
 } SEARCH_CONDITION;
@@ -335,9 +317,9 @@ void dumpScanInfo(MemBlock* mbLinked)
 /// @param dataSize Data unit size
 /// @param addr Base address
 /// @param val New value
-void poke(HANDLE pHandle, int dataSize, unsigned int* addr, unsigned int val)
+void poke(HANDLE pHandle, int dataSize, intptr_t addr, unsigned int val)
 {
-    if (WriteProcessMemory(pHandle, addr, &val, dataSize, NULL) == 0)
+    if (WriteProcessMemory(pHandle, (void*) addr, &val, dataSize, NULL) == 0)
     {
         std::cout << "poke failed\r\n";
     }
@@ -348,11 +330,11 @@ void poke(HANDLE pHandle, int dataSize, unsigned int* addr, unsigned int val)
 /// @param dataSize Data unit size
 /// @param addr Base address
 /// @return Value stored in base address
-unsigned int peek(HANDLE pHandle, int dataSize, unsigned char* addr)
+unsigned int peek(HANDLE pHandle, int dataSize, intptr_t addr)
 {
     unsigned int val = 0;
 
-    if (ReadProcessMemory(pHandle, addr, &val, dataSize, NULL) == 0)
+    if (ReadProcessMemory(pHandle, (void*) addr, &val, dataSize, NULL) == 0)
     {
         std::cout << "peek failed\r\n";
     }
@@ -374,7 +356,7 @@ void printMatches(MemBlock* mbLinked)
             if (IS_IN_SEARCH(mb, offset)) 
             {
                 // prints address with its value. Value is displayed both in hex and decimal format
-                unsigned int val = peek(mb->pHandle, mb->dataSize, (unsigned char*) mb->addr + offset);
+                unsigned int val = peek(mb->pHandle, mb->dataSize, (intptr_t) mb->addr + offset);
                 std::cout << "0x" << std::hex << (intptr_t)(mb->addr) + offset << std::dec << ": ";
                 std::cout << "0x" << std::hex << val << std::dec << " ";
                 std::cout << val << " " << mb->size << "\r\n"; 
@@ -402,33 +384,139 @@ int getMatchesCount(MemBlock* mbLinked)
     return count;
 }
 
-int main(int argc, char* argv[]) 
+/// @brief Converts decimal/hex string values into integers
+/// @param s String i.e. char pointer
+/// @return Decimal integer
+unsigned int stringToInt(char* s)
 {
-    MemBlock* scan = createScan(atoi(argv[1]), 4); // data size 4 bytes; other possible values are 1 or 2
-    if (scan) 
+    int base = 10;
+
+    if (s[0] == '0' && s[1] == 'x')
     {
-
-        // temporary test sequence
-         // applies search to addresses where value 1000 is included
-        std::cout << "searching for 1000\r\n";
-        updateScan(scan, COND_EQUALS, 1000);
-        printMatches(scan);
-
-        {
-            char s[10];
-            fgets(s, sizeof s, stdin);
-        }
-
-        // then apply a new search to previously found addresses; this might return nothing because it's unlikely that
-        // the process suddenly changed existing register values between reads 
-        // e.g. open notepad.exe -> read memory - do nothing -> read again
-        std::cout << "searching for decreassed\r\n";
-        updateScan(scan, COND_DECREASED, 0);
-        printMatches(scan);
-        //dumpScanInfo(scan);
-
-        freeScan(scan);
+        base = 16;
+        s += 2; // move pointer reference two steps forward to skip over 0x
     }
 
+    return strtoul(s, NULL, base);
+}
+
+MemBlock* uiNewScan()
+{
+    MemBlock* scan = NULL;
+    DWORD pid;
+    int dataSize;
+    unsigned int startValue; // for searching a specific value if startCondition is COND_EQUALS
+    SEARCH_CONDITION startCondition;
+    char s[20]; // input buffer
+
+    while(1)
+    {
+        std::cout << "\r\nEnter the process id: ";
+        fgets(s, sizeof(s), stdin);
+        pid = stringToInt(s);
+        std::cout << "\r\nEnter the data size: ";
+        fgets(s, sizeof(s), stdin);
+        dataSize = stringToInt(s);
+        std::cout << "\r\nEnter the start value, or 'u' for unknown: ";
+        fgets(s, sizeof(s), stdin);
+        if (s[0] == 'u')
+        {
+            startCondition = COND_UNCONDITIONAL;
+            startValue = 0; // any value suffices as it's meaningless
+        }
+        else
+        {
+            startCondition = COND_EQUALS;
+            startValue = stringToInt(s);
+        }
+
+        scan = createScan(pid, dataSize);
+        if (scan)
+        {
+            break;
+        }
+        std::cout << "\r\nInvalid scan";
+    }
+
+    updateScan(scan, startCondition, startValue);
+    std::cout << "\r\n" << getMatchesCount(scan) << " matches found\n\n";
+
+    return scan;
+}
+
+void uiPoke(HANDLE pHandle, int dataSize)
+{
+    unsigned int addr;
+    unsigned int val;
+    char s[20];
+
+    std::cout << "Enter the address: ";
+    fgets(s, sizeof(s), stdin);
+    addr = stringToInt(s);
+
+    std::cout << "\n\nEnter the value: ";
+    fgets(s, sizeof(s), stdin);
+    val = stringToInt(s);
+    std::cout << "\r\n";
+
+    poke(pHandle, dataSize, addr, val);
+}
+
+void uiRunScan()
+{
+    unsigned int val;
+    char s[20];
+    MemBlock* scan;
+
+    scan = uiNewScan();
+
+    while (1)
+    {
+        std::cout << "\r\nEnter the next value or, ";
+        std::cout << "\r\n[i] increased";
+        std::cout << "\r\n[d] decreased";
+        std::cout << "\r\n[m] print matches";
+        std::cout << "\r\n[p] poke address";
+        std::cout << "\r\n[n] new scan";
+        std::cout << "\r\n[q] quit\r\n";
+
+        fgets(s, sizeof(s), stdin);
+        std::cout << "\r\n";
+
+        switch (s[0])
+        {
+            case 'i':
+                updateScan(scan, COND_INCREASED, 0);
+                std::cout << getMatchesCount(scan) << " matches found\r\n";
+                break;
+            case 'd':
+                updateScan(scan, COND_DECREASED, 0);
+                std::cout << getMatchesCount(scan) << " matches found\r\n"; 
+                break;
+            case 'm':
+                printMatches(scan);
+                break;
+            case 'p':
+                uiPoke(scan->pHandle, scan->dataSize);
+                break;
+            case 'n':
+                freeScan(scan);
+                scan = uiNewScan();
+                break;
+            case 'q':
+                freeScan(scan);
+                return;
+            default:
+                val = stringToInt(s);
+                updateScan(scan, COND_EQUALS, val);
+                std::cout << getMatchesCount(scan) << " matches left";
+                break;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) 
+{
+    uiRunScan();
     return 0;
 }
