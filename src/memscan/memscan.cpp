@@ -1,67 +1,64 @@
-/* Memory scanner in C++ (in progress)
-Based on a youtube tutorial written in C (https://www.youtube.com/watch?v=YRPMdb1YMS8&list=WL; has total of 8 parts)
+// Memory scanner in C++ //
 
-TODO:
-- memscan is fully done. Now change code into C++ style
-- add a Gui (library will be decided later)
-
-Lots and lots of comments to help learn and recall stuff. Most of these will be removed later.
-*/
+#include "memscan.hpp"
 
 #include <handleapi.h>
-#include <iostream>
 #include <memoryapi.h>
 #include <processthreadsapi.h>
 #include <winerror.h>
 #include <winnt.h>
-//#include <bitset>
+#include <psapi.h>
 
-// macros for searching memory; first checks if offset value is in mask, second updates mask to exclude offset value
-#define IS_IN_SEARCH(mb,offset) (mb->searchMask[(offset)/8] & (1<<(offset)%8))
-#define REMOVE_FROM_SEARCH(mb,offset) (mb->searchMask[(offset)/8] &= ~(1<<(offset)%8)); // ~ is bitwise NOT/complement
+#include <cstdint>
+#include <iostream>
 
-/// @brief A single block of memory
-typedef struct MemBlock 
+
+/// @brief Check if BASIC_MEMORY_INFORMATION protect condition allows for reading and writing to memory location
+/// @param protectCond 
+/// @return A boolean
+bool mem_scan::checkPage(uint32_t protectCond)
 {
-    HANDLE pHandle; // process handle; which process uses this piece of memory
-    unsigned char* addr; // base address: where process stores memory
-    int size; // memory size
-    unsigned char* buffer; // local address: read data from base addr, manipulate it, then write it back to base addr
-    unsigned char* searchMask; // mask where each bit is 1 for matching byte in buffer and 0 otherwise
-    int matches; // number of matched bytes
-    int dataSize; // on what basis are search comparisons done (1 for uchar, 2 for ushort, 4 for uint)
-    struct MemBlock* next; // pointer to next block memory i.e. next node of linked list
-} MemBlock; 
+    return protectCond & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
+}
 
-typedef enum Cond
+/// @brief Check if offset byte is in mask
+/// @return A boolean
+bool mem_scan::isInSearch(mem_scan::MemBlock* mb, 
+                          int offset)
 {
-    COND_UNCONDITIONAL, // everything is accepted, default setting
-    COND_EQUALS, // search matches particular value
-    COND_INCREASED, // include byte if its value has increase from last search
-    COND_DECREASED, // same as above, but value has decreased
-} SEARCH_CONDITION;
+    return (mb->searchMask[(offset)/8] & (1<<(offset)%8));
+}
+
+/// @brief Update mask to exclude offset value
+/// @param mb 
+/// @param offset 
+void mem_scan::removeFromSearch(mem_scan::MemBlock* mb, 
+                                int offset)
+{
+    mb->searchMask[(offset)/8] &= ~(1<<(offset)%8); // ~ is bitwise NOT/complement
+}
 
 /// @brief Create a local memory block for a process
 /// @param hProc Process handle
 /// @param memInfo Internal information of base block
 /// @return Pointer to memory block
-MemBlock* createMemBlock(HANDLE pHandle, 
-                         MEMORY_BASIC_INFORMATION* memInfo, 
-                         int dataSize) 
+mem_scan::MemBlock* mem_scan::createMemBlock(HANDLE pHandle, 
+                                             MEMORY_BASIC_INFORMATION* memInfo, 
+                                             int dataSize) 
 {
-    MemBlock* mb = (MemBlock*) malloc (sizeof(MemBlock));
+    mem_scan::MemBlock* mb = reinterpret_cast<mem_scan::MemBlock*>(malloc (sizeof(mem_scan::MemBlock)));
 
     if (mb) 
     {
         mb->pHandle = pHandle;
-        mb->addr = (unsigned char*) memInfo->BaseAddress;
+        mb->addr = reinterpret_cast<uint8_t*>(memInfo->BaseAddress);
         mb->size = memInfo->RegionSize;
-        mb->buffer = (unsigned char*) malloc(memInfo->RegionSize); // allocate space for memInfo
-        mb->searchMask = (unsigned char*) malloc(memInfo->RegionSize/8);
+        mb->buffer = reinterpret_cast<uint8_t*>(malloc(memInfo->RegionSize));
+        mb->searchMask = reinterpret_cast<uint8_t*>(malloc(memInfo->RegionSize/8)); // bitmask requires 1/8th of size
         memset(mb->searchMask, 0xff, memInfo->RegionSize/8); // 0xff is equal to 1111 1111 in binary
         mb->matches = memInfo->RegionSize; // initially search for every byte i.e. match to entire buffer
         mb->dataSize = dataSize;
-        mb->next = NULL;
+        mb->next = nullptr;
     }
 
     return mb;
@@ -69,7 +66,7 @@ MemBlock* createMemBlock(HANDLE pHandle,
 
 /// @brief Free allocated memory block
 /// @param mb Block address
-void freeMemBlock(MemBlock* mb) 
+void mem_scan::freeMemBlock(mem_scan::MemBlock* mb) 
 {
     if (mb) 
     {
@@ -90,73 +87,65 @@ void freeMemBlock(MemBlock* mb)
 /// @param mb Block address 
 /// @param condition Search condition
 /// @param val Comparison value when condition is COND_EQUALS
-void updateMemBlock(MemBlock* mb, 
-                    SEARCH_CONDITION condition, 
-                    unsigned int val) 
+void mem_scan::updateMemBlock(mem_scan::MemBlock* mb, 
+                              mem_scan::Cond condition, 
+                              uint32_t val) 
 {
-    static unsigned char tempBuf[128*1024]; // byte buffer; 1024 bits = 128 bytes
-    unsigned int bytesLeft;  // how many bytes left to read in total
-    unsigned int totalRead; // how many read so far in total
-    unsigned int bytesToRead; // number of bytes to be read
-    unsigned int bytesRead; // actual bytes read
+    uint8_t tempBuf[128*1024];
+    uint32_t bytesLeft;
+    uint32_t totalRead;
+    uint32_t bytesToRead;
+    SIZE_T bytesRead;
 
     if (mb->matches > 0) 
     {
-        bytesLeft = mb->size; // how many bytes left to read, initially full size
+        bytesLeft = mb->size;
         totalRead = 0;
-        mb->matches = 0; // reset matches for current block
+        mb->matches = 0;
 
         while (bytesLeft) 
         {
-            bytesToRead = (bytesLeft > std::size(tempBuf)) ? std::size(tempBuf) : bytesLeft;
-            // I have no idea what happens here, but still managed to fix the issue:
-            // - after running ReadProcessMemory, bytesToRead resets to 0 for some reason: only tempBuf and &bytesRead 
-            // contents should be modified so what's going on here.
-            // - In order to fix this, I would assign a variable 'a' as placeholder, insert bytesToRead value inside it then
-            // use it afterwards. Turns out, 'a' is not needed directly, only declaring it fixed the issue. 
-            // Yeah... at least it works now, even if it doesn't make sense.
-            unsigned int a = bytesToRead;
-            ReadProcessMemory(mb->pHandle, mb->addr + totalRead, tempBuf, bytesToRead, (SIZE_T*) &bytesRead);
-            if (bytesRead != bytesToRead) 
+            bytesToRead = (bytesLeft > sizeof(tempBuf)) ? sizeof(tempBuf) : bytesLeft;
+            ReadProcessMemory(mb->pHandle, mb->addr + totalRead, tempBuf, bytesToRead, &bytesRead);
+            if (bytesRead != bytesToRead)
             {
-                // if byte count differs from buffer size
                 break;
             }
             if (condition == COND_UNCONDITIONAL) 
             {
-                // no comparison required
-                // set start index based on totalRead (byte-normalized), write 1s by amount of bytesRead (again normalized)
+                // no comparison required: set start index based on totalRead, write 1s by amount of bytesRead
                 memset(mb->searchMask + (totalRead/8), 0xff, bytesRead/8);
                 mb->matches += bytesRead;
             } 
             else 
             {
-                unsigned int offset; // offset of tempBuf i.e. local offset
-
+                uint32_t offset; // offset of tempBuf i.e. local offset
                 for (offset = 0; offset < bytesRead; offset += mb->dataSize) 
                 {
-                    if (IS_IN_SEARCH(mb, (totalRead+offset))) 
-                    {   // totalRead+offset is the overall offset
-                        BOOL isMatch = FALSE;
-                        unsigned int tempVal;
-                        unsigned int prevVal = 0; // previous tempVal
+                    if (isInSearch(mb, (totalRead+offset))) // totalRead+offset is the overall offset
+                    {
+                        bool isMatch = false; 
+                        uint32_t tempVal;
+                        uint32_t prevVal = 0; // previous tempVal
 
                         switch (mb->dataSize)
                         {
-                            case 1: // byte (unsigned char)
+                            case 1: // a byte (unsigned char)
                                 tempVal = tempBuf[offset];
-                                // buffer offset before copying new value into it
-                                prevVal = *((unsigned char*)&mb->buffer[totalRead+offset]);
+                                prevVal = *(reinterpret_cast<uint8_t*>(&mb->buffer[totalRead+offset]));
                                 break;
                             case 2: // 2 bytes (unsigned short)
-                                tempVal = *((unsigned short*)&tempBuf[offset]);
-                                prevVal = *((unsigned short*)&mb->buffer[totalRead+offset]);
+                                tempVal = *(reinterpret_cast<uint16_t*>(&tempBuf[offset]));
+                                prevVal = *(reinterpret_cast<uint16_t*>(&mb->buffer[totalRead+offset]));
                                 break;
                             case 4: // 4 bytes (unsigned int)
                             default:
-                                tempVal = *((unsigned int*)&tempBuf[offset]);
-                                prevVal = *((unsigned int*)&mb->buffer[totalRead+offset]);
+                                tempVal = *(reinterpret_cast<uint32_t*>(&tempBuf[offset]));
+                                prevVal = *(reinterpret_cast<uint32_t*>(&mb->buffer[totalRead+offset]));
                                 break;
+                            case 8: // 8 bytes (unsigned long)
+                                tempVal = *(reinterpret_cast<uint64_t*>(&tempBuf[offset]));
+                                prevVal = *(reinterpret_cast<uint64_t*>(&mb->buffer[totalRead+offset]));
                         }
                         
                         switch (condition) 
@@ -176,52 +165,43 @@ void updateMemBlock(MemBlock* mb,
 
                         if (isMatch) 
                         {
-                            mb->matches++; // increase match counter
+                            mb->matches++;
                         } 
-                        else 
+                        else
                         {
-                            REMOVE_FROM_SEARCH(mb, (totalRead+offset)); // otherwise set overall offset byte to 0
+                            removeFromSearch(mb, (totalRead+offset)); // otherwise set overall offset bit in mask to 0
                         }
                     }
                 }
             }
-            // copy tempBuf data of size bytesRead into MemBlock buffer
-            //
-            // why read memory into tempBuf and immediately copy it to MemBlock buffer, instead of just copy it to MemBlock
-            // straight away?
-            // It creates an intermediary state which allows comparing current buffer data with previously stored buffer
+
             memcpy(mb->buffer + totalRead, tempBuf, bytesRead);
             bytesLeft -= bytesRead;
             totalRead += bytesRead;
         }
-        mb->size = totalRead; // update size to match total amount of bytes read and to flag rest of buffer as invalid
+
+        mb->size = totalRead;
     }
 }
 
 /// @brief Scan and access the linked list of external memory blocks
 /// @param processId Process id
 /// @param dataSize Memory block reading size
-/// @return Pointer to head of linked list 
-MemBlock* createScan(unsigned int processId, int dataSize) 
+/// @return Pointer to linked list 
+mem_scan::MemBlock* mem_scan::createScan(int64_t processId, int dataSize) 
 {
-    MemBlock* mbLinked = nullptr;
-    MEMORY_BASIC_INFORMATION memInfo; // info of current memory chunk
-    unsigned char* addr = 0; // virtual query tracking address; starting from lowest value 0 is important because
+    mem_scan::MemBlock* mbLinked = nullptr;
+    MEMORY_BASIC_INFORMATION memInfo;
+    uint8_t* addr = 0;
 
     // get process handle: need full access to main process, but not to child processes
-    HANDLE pHandle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processId);
+    HANDLE pHandle = OpenProcess(PROCESS_ALL_ACCESS, false, processId);
 
     if (pHandle) 
     {
         while (1) 
         {
-            // VirtualQueryEx performs a query to return memory information of passed process
-            // it requires 
-            //  - process handle which memory is queried
-            //  - pointer to base address where query begins
-            //  - memory information address where query information is written
-            //  - size of buffer where memory information is temporarily stored before writing it to meminfo. This is 
-            //    therefore equal to size of meminfo
+            // VirtualQueryEx performs a query to return memory information
             // Returns 0 if failed or base address value gets too high, otherwise a non-zero value which is equal to
             // the number of bytes in the meminfo buffer
             SIZE_T byteCount = VirtualQueryEx(pHandle, addr, &memInfo, sizeof(memInfo));
@@ -229,25 +209,19 @@ MemBlock* createScan(unsigned int processId, int dataSize)
             {
                 break;
             }
-
             // discards unreadable/unwritable blocks i.e. if meminfo.State gets values MEM_FREE or MEM_RESERVE
             // similar logic is applied to meminfo.Protect to check if block allows for writing data except
-            // it can result to 0 from other values. To limit scope only to writable checks, a #define directive is used
-            // Finally, bitwise AND operator is used to apply a masking in order to match to desired values
-            #define WRITABLE (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)
-            if ((memInfo.State & MEM_COMMIT) && (memInfo.Protect & WRITABLE)) 
+            if ((memInfo.State & MEM_COMMIT) && (checkPage(memInfo.Protect))) 
             {
-                MemBlock* mb = createMemBlock(pHandle, &memInfo, dataSize);
+                mem_scan::MemBlock* mb = createMemBlock(pHandle, &memInfo, dataSize);
                 if (mb) 
                 {
-                    // add a node to linked list
                     mb->next = mbLinked;
                     mbLinked = mb;
                 }
             }
 
-            // move base address pointer to start of next block (range of pages)
-            addr = (unsigned char*) memInfo.BaseAddress + memInfo.RegionSize;
+            addr = (uint8_t*)memInfo.BaseAddress + memInfo.RegionSize;
         }
     }
     
@@ -255,59 +229,32 @@ MemBlock* createScan(unsigned int processId, int dataSize)
 };
 
 /// @brief Free allocated memory of scan list
-/// @param mbLinked Linked list head
-void freeScan (MemBlock* mbLinked) 
+/// @param mbLinked Linked list
+void mem_scan::freeScan (mem_scan::MemBlock* mbLinked) 
 {
-    CloseHandle(mbLinked->pHandle); // close the process
+    CloseHandle(mbLinked->pHandle);
 
     while (mbLinked) 
     {
-        MemBlock* mb = mbLinked; // point to current head node
-        mbLinked = mbLinked->next; // move list head to next node
-        freeMemBlock(mb); // free discarded memory node
+        mem_scan::MemBlock* mb = mbLinked;
+        mbLinked = mbLinked->next;
+        freeMemBlock(mb);
     }
 }
 
-/// @brief Updates all memory blocks
-/// @param mbLinked Linked list head
+/// @brief Update all memory blocks
+/// @param mbLinked Linked list
 /// @param condition Search condition
 /// @param int Value to compare to if condition has value COND_EQUALS
-void updateScan(MemBlock* mbLinked, 
-                SEARCH_CONDITION condition, 
-                unsigned int val) 
+void mem_scan::updateScan(mem_scan::MemBlock* mbLinked, 
+                          mem_scan::Cond condition, 
+                          uint32_t val) 
 {
-    MemBlock* mb = mbLinked;
+    mem_scan::MemBlock* mb = mbLinked;
 
     while (mb) 
     {
         updateMemBlock(mb, condition, val);
-        mb = mb->next;
-    }
-}
-
-/// @brief Print info of accessed memory blocks
-/// @param mbLinked Linked list head
-void dumpScanInfo(MemBlock* mbLinked) 
-{
-    MemBlock* mb = mbLinked;
-    
-    while (mb) 
-    {
-        //printf("0x%08x %d\r\n", mb->addr, mb->size); // C printf to test and compare
-        // print memory addresses and their sizes
-        std::cout << "0x" << std::hex << (unsigned char*)(mb->addr) << std::dec << " " << mb->size << "\r\n";
-
-        // uncomment this to test output (remember to also uncomment #include <bitset>)
-        // it will print buffer contents in binary, and might take a while to finish!
-        /*
-        int i;
-        for (i = 0; i< mb->size; i++) {
-            // print buffer contents
-            std::cout << std::bitset<32>(mb->buffer[i]);
-        }
-        std::cout << "\r\n";
-        */
-
         mb = mb->next;
     }
 }
@@ -317,9 +264,9 @@ void dumpScanInfo(MemBlock* mbLinked)
 /// @param dataSize Data unit size
 /// @param addr Base address
 /// @param val New value
-void poke(HANDLE pHandle, int dataSize, intptr_t addr, unsigned int val)
+void mem_scan::poke(HANDLE pHandle, int dataSize, uintptr_t addr, uint32_t val)
 {
-    if (WriteProcessMemory(pHandle, (void*) addr, &val, dataSize, NULL) == 0)
+    if (WriteProcessMemory(pHandle, reinterpret_cast<void*>(addr), &val, dataSize, nullptr) == 0)
     {
         std::cout << "poke failed\r\n";
     }
@@ -330,11 +277,11 @@ void poke(HANDLE pHandle, int dataSize, intptr_t addr, unsigned int val)
 /// @param dataSize Data unit size
 /// @param addr Base address
 /// @return Value stored in base address
-unsigned int peek(HANDLE pHandle, int dataSize, intptr_t addr)
+int64_t mem_scan::peek(HANDLE pHandle, int dataSize, uintptr_t addr)
 {
-    unsigned int val = 0;
+    int64_t val = 0;
 
-    if (ReadProcessMemory(pHandle, (void*) addr, &val, dataSize, NULL) == 0)
+    if (ReadProcessMemory(pHandle, reinterpret_cast<void*>(addr), &val, dataSize, nullptr) == 0)
     {
         std::cout << "peek failed\r\n";
     }
@@ -343,21 +290,21 @@ unsigned int peek(HANDLE pHandle, int dataSize, intptr_t addr)
 }
 
 /// @brief Print search matches
-/// @param mbLinked Linked list head
-void printMatches(MemBlock* mbLinked) 
+/// @param mbLinked Linked list
+void mem_scan::printMatches(mem_scan::MemBlock* mbLinked) 
 {
-    unsigned int offset;
-    MemBlock* mb = mbLinked;
+    int64_t offset;
+    mem_scan::MemBlock* mb = mbLinked;
 
     while (mb) 
     {
         for (offset = 0; offset < mb->size; offset += mb->dataSize) 
         {
-            if (IS_IN_SEARCH(mb, offset)) 
+            if (isInSearch(mb, offset)) 
             {
-                // prints address with its value. Value is displayed both in hex and decimal format
-                unsigned int val = peek(mb->pHandle, mb->dataSize, (intptr_t) mb->addr + offset);
-                std::cout << "0x" << std::hex << (intptr_t)(mb->addr) + offset << std::dec << ": ";
+                int64_t val = peek(mb->pHandle, mb->dataSize, reinterpret_cast<uint64_t>(mb->addr) + offset);
+
+                std::cout << "0x" << std::hex << reinterpret_cast<uint64_t>(mb->addr) + offset << std::dec << ": ";
                 std::cout << "0x" << std::hex << val << std::dec << " ";
                 std::cout << val << " " << mb->size << "\r\n"; 
             }
@@ -368,11 +315,11 @@ void printMatches(MemBlock* mbLinked)
 }
 
 /// @brief Return match count
-/// @param mbLinked Linked list head
+/// @param mbLinked Linked list
 /// @return Match count
-int getMatchesCount(MemBlock* mbLinked) 
+int mem_scan::getMatchesCount(mem_scan::MemBlock* mbLinked) 
 {
-    MemBlock* mb = mbLinked;
+    mem_scan::MemBlock* mb = mbLinked;
     int count = 0;
 
     while (mb) 
@@ -384,50 +331,74 @@ int getMatchesCount(MemBlock* mbLinked)
     return count;
 }
 
-/// @brief Converts decimal/hex string values into integers
+/// @brief Convert decimal/hex string values into integers
 /// @param s String i.e. char pointer
 /// @return Decimal integer
-unsigned int stringToInt(char* s)
+int64_t mem_scan::stringToInt(char* s)
 {
     int base = 10;
 
     if (s[0] == '0' && s[1] == 'x')
     {
         base = 16;
-        s += 2; // move pointer reference two steps forward to skip over 0x
+        s += 2;
     }
 
-    return strtoul(s, NULL, base);
+    return strtoul(s, nullptr, base);
 }
 
-MemBlock* uiNewScan()
+/// @brief Access and modify the value of an memory address
+/// @param pHandle Process handle
+/// @param dataSize Data block size
+void mem_scan::uiPoke(HANDLE pHandle, int dataSize)
 {
-    MemBlock* scan = NULL;
+    uint32_t addr;
+    uint32_t val;
+    char input[20];
+
+    std::cout << "Enter the address: ";
+    std::cin >> input;
+    addr = stringToInt(input);
+
+    std::cout << "\n\nEnter the value: ";
+    val = stringToInt(input);
+    std::cout << "\r\n";
+
+    mem_scan::poke(pHandle, dataSize, addr, val);
+}
+
+/// @brief Initialize a new scanner
+/// @return Linked list
+mem_scan::MemBlock* mem_scan::uiNewScan()
+{
+    mem_scan::MemBlock* scan = nullptr;
     DWORD pid;
     int dataSize;
-    unsigned int startValue; // for searching a specific value if startCondition is COND_EQUALS
-    SEARCH_CONDITION startCondition;
-    char s[20]; // input buffer
+    int64_t startValue;
+    Cond startCondition;
+    char input[20];
 
     while(1)
     {
         std::cout << "\r\nEnter the process id: ";
-        fgets(s, sizeof(s), stdin);
-        pid = stringToInt(s);
+        std::cin >> input; 
+        pid = stringToInt(input);
+
         std::cout << "\r\nEnter the data size: ";
-        fgets(s, sizeof(s), stdin);
-        dataSize = stringToInt(s);
+        std::cin >> input;
+        dataSize = stringToInt(input);
+
         std::cout << "\r\nEnter the start value, or 'u' for unknown: ";
-        fgets(s, sizeof(s), stdin);
-        if (s[0] == 'u')
+        std::cin >> input;
+        if (input[0] == 'u')
         {
             startCondition = COND_UNCONDITIONAL;
-            startValue = 0; // any value suffices as it's meaningless
+            startValue = 0;
         }
         else
         {
             startCondition = COND_EQUALS;
-            startValue = stringToInt(s);
+            startValue = stringToInt(input);
         }
 
         scan = createScan(pid, dataSize);
@@ -444,46 +415,29 @@ MemBlock* uiNewScan()
     return scan;
 }
 
-void uiPoke(HANDLE pHandle, int dataSize)
+/// @brief Start a memory scanner
+void mem_scan::uiRunScan()
 {
-    unsigned int addr;
-    unsigned int val;
-    char s[20];
-
-    std::cout << "Enter the address: ";
-    fgets(s, sizeof(s), stdin);
-    addr = stringToInt(s);
-
-    std::cout << "\n\nEnter the value: ";
-    fgets(s, sizeof(s), stdin);
-    val = stringToInt(s);
-    std::cout << "\r\n";
-
-    poke(pHandle, dataSize, addr, val);
-}
-
-void uiRunScan()
-{
-    unsigned int val;
-    char s[20];
-    MemBlock* scan;
+    uint32_t val;
+    char input[20];
+    mem_scan::MemBlock* scan;
 
     scan = uiNewScan();
 
     while (1)
     {
-        std::cout << "\r\nEnter the next value or, ";
-        std::cout << "\r\n[i] increased";
-        std::cout << "\r\n[d] decreased";
-        std::cout << "\r\n[m] print matches";
-        std::cout << "\r\n[p] poke address";
-        std::cout << "\r\n[n] new scan";
-        std::cout << "\r\n[q] quit\r\n";
+        std::cout << "\r\nEnter the next value or, "
+            "\r\n[i] increased"
+            "\r\n[d] decreased"
+            "\r\n[m] print matches"
+            "\r\n[p] poke address"
+            "\r\n[n] new scan"
+            "\r\n[q] quit\r\n";
 
-        fgets(s, sizeof(s), stdin);
+        std::cin >> input;
         std::cout << "\r\n";
 
-        switch (s[0])
+        switch (input[0])
         {
             case 'i':
                 updateScan(scan, COND_INCREASED, 0);
@@ -507,16 +461,10 @@ void uiRunScan()
                 freeScan(scan);
                 return;
             default:
-                val = stringToInt(s);
+                val = stringToInt(input);
                 updateScan(scan, COND_EQUALS, val);
                 std::cout << getMatchesCount(scan) << " matches left";
                 break;
         }
     }
-}
-
-int main(int argc, char* argv[]) 
-{
-    uiRunScan();
-    return 0;
 }
