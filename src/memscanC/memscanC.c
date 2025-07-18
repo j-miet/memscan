@@ -258,8 +258,8 @@ void print_matches(MEMBLOCK* mb_linked)
         {
             if (IS_IN_SEARCH(mb, offset)) 
             {
-                unsigned int val = peek(mb->pHandle, mb->data_size, (uintptr_t) mb->addr + offset);
-                printf("0x%d-> value: 0x%d | size: %d\r\n", (uintptr_t)(mb->addr) + offset, val, mb->size);
+                unsigned int val = peek(mb->pHandle, mb->data_size, (uintptr_t)mb->addr + offset);
+                printf("0x%08x-> value: 0x%08x (%d)| size: %d\r\n", (uintptr_t)mb->addr + offset, val, val, mb->size);
             }
         }
 
@@ -312,10 +312,14 @@ MEMBLOCK* ui_new_scan()
         printf("\r\nEnter the data size: ");
         fgets(s, sizeof(s), stdin);
         data_size = string_to_int(s);
+        if (s[0] == '\n')
+        {
+            data_size = 4;
+        }
 
         printf("\r\nEnter the start value, or 'u' for unknown: ");
         fgets(s, sizeof(s), stdin);
-        if (s[0] == 'u')
+        if (s[0] == 'u' || s[0] == '\n')
         {
             start_condition = COND_UNCONDITIONAL;
             start_value = 0;
@@ -347,11 +351,11 @@ void ui_poke(HANDLE pHandle, int data_size)
     unsigned int val;
     char s[20];
 
-    printf("Enter the address :" );
+    printf("Enter the address: ");
     fgets(s, sizeof(s), stdin);
     addr = string_to_int(s);
 
-    printf("\n\nEnter the value: ");
+    printf("\nEnter the value: ");
     fgets(s, sizeof(s), stdin);
     val = string_to_int(s);
     printf("\r\n");
@@ -376,7 +380,8 @@ void ui_run_scan()
         printf("\r\n[p] poke address");
         printf("\r\n[n] new scan");
         printf("\r\n[q] quit\r\n");
-
+        
+        printf("=>");
         fgets(s, sizeof(s), stdin);
         printf("\r\n");
 
