@@ -1,24 +1,29 @@
 #ifndef MEMSCAN_HPP
 #define MEMSCAN_HPP
 
-#include <cstdint>
-
 #include <handleapi.h>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace mem_scan
 {
-    // A single block of memory
+    // A single block of memory. Memory blocks are sequential in form of a linked list.
     struct MemBlock
     {
         HANDLE pHandle;
+        //std::unique_ptr<uint8_t> addr;
         uint8_t* addr;
         int size;
-        uint8_t* buffer;
-        uint8_t* searchMask;
+        std::vector<uint8_t> buffer;
+        std::vector<uint8_t> searchMask;
         int matches;
         int dataSize;
-        struct MemBlock* next;
+        MemBlock* next;
     };
     // Memory search conditions
     enum Cond
@@ -29,23 +34,25 @@ namespace mem_scan
         COND_DECREASED
     };
 
-    bool checkPage(uint32_t protectCond);
+    const std::array<int, 4> writable {PAGE_READWRITE, PAGE_WRITECOPY, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY};
+
+    bool checkPage(int32_t protectCond);
     bool isInSearch(MemBlock* mb, int offset);
     void removeFromSearch(MemBlock* mb, int offset);
     MemBlock* createMemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo, int dataSize);
-    void freeMemBlock(MemBlock* mb);
     void updateMemBlock(MemBlock* mb, Cond condition, uint32_t val); 
-    MemBlock* createScan(int64_t processId, int dataSize);
+    MemBlock* createScan(uint32_t processId, int dataSize);
     void freeScan (MemBlock* mbLinked);
     void updateScan(MemBlock* mbLinked, Cond condition, uint32_t val); 
     void poke(HANDLE pHandle, int dataSize, uintptr_t addr, uint32_t val);
-    int64_t peek(HANDLE pHandle, int dataSize, uintptr_t addr);
+    uint32_t peek(HANDLE pHandle, int dataSize, uintptr_t addr);
     void printMatches(MemBlock* mbLinked);
     int getMatchesCount(MemBlock* mbLinked);
-    int64_t stringToInt(char* s);
+    int stringToInt(std::string s);
     MemBlock* uiNewScan();
     void uiPoke(HANDLE pHandle, int dataSize);
     void uiRunScan();
     
 } // namespace mem_scan
+
 #endif /* MEMSCAN.HPP */
