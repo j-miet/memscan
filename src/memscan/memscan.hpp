@@ -17,9 +17,9 @@ namespace mem_scan
     {
         HANDLE pHandle;
         //std::unique_ptr<uint8_t> addr;
-        uint8_t* addr;
+        int8_t* addr;
         int size;
-        std::vector<uint8_t> buffer;
+        std::vector<int8_t> buffer;
         std::vector<uint8_t> searchMask;
         int matches;
         int dataSize;
@@ -40,12 +40,12 @@ namespace mem_scan
     bool isInSearch(MemBlock* mb, int offset);
     void removeFromSearch(MemBlock* mb, int offset);
     MemBlock* createMemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo, int dataSize);
-    void updateMemBlock(MemBlock* mb, Cond condition, uint32_t val); 
-    MemBlock* createScan(uint32_t processId, int dataSize);
+    void updateMemBlock(MemBlock* mb, Cond condition, int64_t val); 
+    MemBlock* createScan(int64_t processId, int dataSize);
     void freeScan (MemBlock* mbLinked);
-    void updateScan(MemBlock* mbLinked, Cond condition, uint32_t val); 
-    void poke(HANDLE pHandle, int dataSize, uintptr_t addr, uint32_t val);
-    uint32_t peek(HANDLE pHandle, int dataSize, uintptr_t addr);
+    void updateScan(MemBlock* mbLinked, Cond condition, int64_t val); 
+    void poke(HANDLE pHandle, int dataSize, int64_t addr, int64_t val);
+    int64_t peek(HANDLE pHandle, int dataSize, int64_t addr);
     void printMatches(MemBlock* mbLinked);
     int getMatchesCount(MemBlock* mbLinked);
     int stringToInt(std::string s);
