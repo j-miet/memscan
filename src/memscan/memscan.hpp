@@ -3,21 +3,18 @@
 
 #include <handleapi.h>
 
-#include <algorithm>
 #include <array>
-#include <cstdint>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace mem_scan
 {
-    // A single block of memory. Memory blocks are sequential in form of a linked list.
+    // A single block of memory. Memory blocks are sequential, forming a linked list.
     struct MemBlock
     {
         HANDLE pHandle;
-        //std::unique_ptr<uint8_t> addr;
-        int8_t* addr;
+        //int8_t* addr;
+        std::unique_ptr<int8_t> addr;
         int size;
         std::vector<int8_t> buffer;
         std::vector<uint8_t> searchMask;

@@ -1,21 +1,18 @@
 // Memory scanner in C++ //
 
-#include "memscan.hpp"
-
 #include <handleapi.h>
 #include <memoryapi.h>
 #include <processthreadsapi.h>
 #include <winerror.h>
-#include <winnt.h>
-#include <psapi.h>
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
-#include <iostream>
-#include <string>
-#include <vector>
 #include <cstring>
+#include <iostream>
+#include <memory>
+#include <vector>
+
+#include "memscan.hpp"
 
 
 /// @brief Check if BASIC_MEMORY_INFORMATION protect condition allows for reading and writing to memory location
@@ -57,11 +54,11 @@ mem_scan::MemBlock* mem_scan::createMemBlock(HANDLE pHandle,
     if (mb) 
     {
         mb->pHandle = pHandle;
-        mb->addr = static_cast<int8_t*>(memInfo->BaseAddress);
+        mb->addr = std::move(std::unique_ptr<int8_t>(static_cast<int8_t*>(memInfo->BaseAddress)));
         mb->size = memInfo->RegionSize;
         mb->buffer.reserve(memInfo->RegionSize);
-        mb->searchMask.reserve(memInfo->RegionSize/8); // bitmask requires 1/8th of byte size
-        // fill mask with 1's by inserting 0xff (= 1111 1111 in binary) into each byte
+        mb->searchMask.reserve(memInfo->RegionSize/8);
+        // fill mask with 1's by inserting 0xff (= 1111 1111 in binary) into each vector position
         std::fill(mb->searchMask.begin(), mb->searchMask.begin()+memInfo->RegionSize/8, 0xff);
         mb->matches = memInfo->RegionSize; // initially search for every address in region
         mb->dataSize = dataSize;
@@ -80,7 +77,7 @@ void mem_scan::updateMemBlock(mem_scan::MemBlock* mb,
                               int64_t val) 
 {
     // using std::vector<int8_t> tempBuf(1024*128) slows the update process enormously. 
-    // No idea why it happens and how to fix it. Instead, std::array is used and it operates as expected
+    // No idea why it happens and how to fix it. Instead, std::array is used and it operates as expected.
 
     std::array<int8_t, 1024*128> tempBuf;
     int64_t bytesLeft;
@@ -97,7 +94,7 @@ void mem_scan::updateMemBlock(mem_scan::MemBlock* mb,
         while (bytesLeft) 
         {
             bytesToRead = (bytesLeft > sizeof(tempBuf)) ? sizeof(tempBuf) : bytesLeft;
-            ReadProcessMemory(mb->pHandle, mb->addr + totalRead, tempBuf.data(), bytesToRead, &bytesRead);
+            ReadProcessMemory(mb->pHandle, mb->addr.get() + totalRead, tempBuf.data(), bytesToRead, &bytesRead);
             if (bytesRead != bytesToRead)
             {
                 break;
@@ -213,13 +210,14 @@ mem_scan::MemBlock* mem_scan::createScan(int64_t processId, int dataSize)
                 }
             }
 
-            addr = (int8_t*)memInfo.BaseAddress + memInfo.RegionSize;
+            addr = static_cast<int8_t*>(memInfo.BaseAddress) + memInfo.RegionSize;
         }
     }
+
     return mbLinked;
 };
 
-/// @brief Free allocated memory of scan list
+/// @brief Free allocated memory in scan list
 /// @param mbLinked Linked list
 void mem_scan::freeScan (mem_scan::MemBlock* mbLinked) 
 {
@@ -229,6 +227,7 @@ void mem_scan::freeScan (mem_scan::MemBlock* mbLinked)
     {
         mem_scan::MemBlock* mb = mbLinked;
         mbLinked = mbLinked->next;
+        mb->addr.release();
         delete(mb);
     }
 }
@@ -293,8 +292,8 @@ void mem_scan::printMatches(mem_scan::MemBlock* mbLinked)
         {
             if (mem_scan::isInSearch(mb, offset)) 
             {
-                int64_t val = peek(mb->pHandle, mb->dataSize, reinterpret_cast<intptr_t>(mb->addr) + offset);
-                std::cout << "0x" << std::hex << reinterpret_cast<intptr_t>(mb->addr) + offset << std::dec;
+                int64_t val = peek(mb->pHandle, mb->dataSize, reinterpret_cast<intptr_t>(mb->addr.get()) + offset);
+                std::cout << "0x" << std::hex << reinterpret_cast<intptr_t>(mb->addr.get()) + offset << std::dec;
                 std::cout << "-> value: 0x" << std::hex << val << std::dec << " (";
                 std::cout << val << ") | size: " << mb->size << "\r\n";
             }
@@ -346,7 +345,6 @@ int mem_scan::stringToInt(std::string s)
     
     for (auto ch : s)
     {   
-
         if ((std::isdigit(ch) == false) ? true : false)
         { 
             return -1; // processId and dataSize are always non-negative so -1 can be used to discard bad inputs
@@ -419,13 +417,14 @@ mem_scan::MemBlock* mem_scan::uiNewScan()
             startCondition = COND_EQUALS;
             startValue = mem_scan::stringToInt(input);
         }
-
+        
         scan = mem_scan::createScan(pid, dataSize);
         if (scan)
         {
             break;
         }
-        std::cout << "\r\nInvalid scan";
+
+        std::cout << "\r\nInvalid scan\n";
     }
 
     mem_scan::updateScan(scan, startCondition, startValue);
@@ -439,7 +438,7 @@ void mem_scan::uiRunScan()
 {
     int64_t val;
     std::string input;
-    mem_scan::MemBlock* scan;
+    mem_scan::MemBlock* scan = nullptr;
 
     scan = mem_scan::uiNewScan();
 
@@ -456,7 +455,7 @@ void mem_scan::uiRunScan()
 
         std::cin >> input;
         std::cin.ignore(1024, '\n'); // flush newline from buffer for std::getline
-        std::cout << "\r\n";
+        std::cout << "\r";
 
         switch (input[0])
         {
