@@ -14,12 +14,12 @@ namespace mem_scan
                                int bytesRead, 
                                int totalRead, 
                                int dataSize, 
-                               char* tempBuf[], 
+                               char* tempBuf, 
                                char* val, 
                                Condition condition);
     void updateScanForString(MemBlock* mbLinked, Condition condition, char* val);
     void updateMemBlockString(MemBlock* mb, Condition condition, char* val);
-    void pokeString(HANDLE pHandle, intptr_t addr, const char* val);
-    char* peekString(HANDLE pHandle, intptr_t addr);
+    void pokeString(HANDLE pHandle, uintptr_t addr, char* val, int size);
+    char* peekString(HANDLE pHandle, uintptr_t addr, int size);
 } // namespace mem_scan
 #endif /* MEMSCAN_STR.HPP */
