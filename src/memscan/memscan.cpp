@@ -16,6 +16,56 @@
 #include "memscan_int.hpp"
 #include "memscan_str.hpp"
 
+/*
+BOOL SetPrivilege(
+    HANDLE hToken,          // access token handle
+    LPCTSTR lpszPrivilege,  // name of privilege to enable/disable
+    BOOL bEnablePrivilege   // to enable or disable privilege
+    ) 
+{
+    TOKEN_PRIVILEGES tp;
+    LUID luid;
+
+    if ( !LookupPrivilegeValue( 
+            NULL,            // lookup privilege on local system
+            lpszPrivilege,   // privilege to lookup 
+            &luid ) )        // receives LUID of privilege
+    {
+        printf("LookupPrivilegeValue error: %u\n", GetLastError() ); 
+        return FALSE; 
+    }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    if (bEnablePrivilege)
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    else
+        tp.Privileges[0].Attributes = 0;
+
+    // Enable the privilege or disable all privileges.
+
+    if ( !AdjustTokenPrivileges(
+           hToken, 
+           FALSE, 
+           &tp, 
+           sizeof(TOKEN_PRIVILEGES), 
+           (PTOKEN_PRIVILEGES) NULL, 
+           (PDWORD) NULL) )
+    { 
+          printf("AdjustTokenPrivileges error: %u\n", GetLastError() ); 
+          return FALSE; 
+    } 
+
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED)
+
+    {
+          printf("The token does not have the specified privilege. \n");
+          return FALSE;
+    } 
+
+    return TRUE;
+}
+*/
 
 /**
  * \brief Check if BASIC_MEMORY_INFORMATION protect condition allows for reading and writing to memory location
@@ -138,6 +188,22 @@ mem_scan::MemBlock* mem_scan::createScan(int64_t processId, int dataSize, bool i
     MEMORY_BASIC_INFORMATION memInfo;
     int8_t* addr = 0;
 
+    /*
+    HANDLE hToken;
+    BOOL ok = OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken);
+    if (!ok)
+    {
+         std::cout << "OpenProcessToken failed, error " << GetLastError() << "\n";
+    }
+
+    ok = SetPrivilege(hToken, SE_DEBUG_NAME, TRUE);
+    if (!ok)
+    {
+        std::cout <<"NO PRIVILEGES\n";
+        CloseHandle (hToken);
+    }
+    */
+
     HANDLE pHandle = OpenProcess(PROCESS_ALL_ACCESS, false, processId);
 
     if (pHandle) 
@@ -218,22 +284,34 @@ int mem_scan::getMatchesCount(mem_scan::MemBlock* mbLinked)
 void mem_scan::uiPrintMatches(mem_scan::MemBlock* mbLinked) 
 {
     int64_t offset;
+    int increment;
     mem_scan::MemBlock* mb = mbLinked;
 
     while (mb)
     {
-        for (offset = 0; offset < mb->size; offset += mb->dataSize) 
+        if (mb->isStr)
+        {
+            increment = 1;
+        }
+        else
+        {
+            increment = mb->dataSize;
+        }
+
+        for (offset = 0; offset < mb->size; offset += increment) 
         {
             if (mem_scan::isInSearch(mb, offset)) 
             {
                 if (mb->isStr)
                 {
                     char* sVal = mem_scan::peekString(mb->pHandle, 
-                                                      reinterpret_cast<intptr_t>(mb->addr.get()) + offset);
+                                                      reinterpret_cast<intptr_t>(mb->addr.get()) + offset,
+                                                      mb->dataSize);
                     std::cout << "0x";
                     std::cout << std::hex <<reinterpret_cast<intptr_t>(mb->addr.get()) + offset<< std::dec;
                     std::cout << "-> value: " << std::flush << sVal << std::flush;
-                    std::cout << " | size: " << mb->size << "\r" << std::endl; 
+                    std::cout << " | size: " << mb->size << "\r" << std::endl;
+                    offset = offset + mb->dataSize;
                 }
                 else
                 {
@@ -259,7 +337,7 @@ void mem_scan::uiPrintMatches(mem_scan::MemBlock* mbLinked)
  */
 void mem_scan::uiPoke(HANDLE pHandle, int dataSize, bool isStr)
 {
-    int64_t addr;
+    uintptr_t addr;
     int64_t val;
     char* sVal;
     std::string input;
@@ -279,21 +357,25 @@ void mem_scan::uiPoke(HANDLE pHandle, int dataSize, bool isStr)
 
     if (isStr)
     {
-        mem_scan::pokeString(pHandle, addr, sVal);
+        mem_scan::pokeString(pHandle, addr, sVal, dataSize);
     }
     else
     {
         switch (dataSize)
         {
             case 1:
-                mem_scan::pokeInt8(pHandle, dataSize, addr, val);
+                mem_scan::pokeInt8(pHandle, addr, val);
+                break;
             case 2:
-                mem_scan::pokeInt16(pHandle, dataSize, addr, val);
+                mem_scan::pokeInt16(pHandle, addr, val);
+                break;
             case 4:
-                mem_scan::pokeInt32(pHandle, dataSize, addr, val);
+                mem_scan::pokeInt32(pHandle, addr, val);
+                break;
             case 8:
             default:
-                mem_scan::pokeInt64(pHandle, dataSize, addr, val);
+                mem_scan::pokeInt64(pHandle, addr, val);
+                break;
         }
     }
 }
