@@ -10,7 +10,6 @@
 
 namespace mem_scan
 {
-
     void updateSearchForInt(mem_scan::MemBlock* mb, 
                             int bytesRead, 
                             int totalRead, 
@@ -152,25 +151,25 @@ namespace mem_scan
         }
     }
     
-    void pokeInt8(HANDLE pHandle, int dataSize, intptr_t addr, int8_t val)
+    void pokeInt8(HANDLE pHandle, intptr_t addr, int8_t val)
     {
-        if (WriteProcessMemory(pHandle, reinterpret_cast<int8_t*>(addr), &val, dataSize, nullptr) == 0)
+        if (WriteProcessMemory(pHandle, reinterpret_cast<int8_t*>(addr), &val, 1, nullptr) == 0)
         {
             std::cout << "poke failed\r\n";
         }
     }
 
-    void pokeInt16(HANDLE pHandle, int dataSize, intptr_t addr, int16_t val)
+    void pokeInt16(HANDLE pHandle, intptr_t addr, int16_t val)
     {
-        if (WriteProcessMemory(pHandle, reinterpret_cast<int16_t*>(addr), &val, dataSize, nullptr) == 0)
+        if (WriteProcessMemory(pHandle, reinterpret_cast<int16_t*>(addr), &val, 2, nullptr) == 0)
         {
             std::cout << "poke failed\r\n";
         }
     }
 
-    void pokeInt32(HANDLE pHandle, int dataSize, intptr_t addr, int32_t val)
+    void pokeInt32(HANDLE pHandle, intptr_t addr, int32_t val)
     {
-        if (WriteProcessMemory(pHandle, reinterpret_cast<int32_t*>(addr), &val, dataSize, nullptr) == 0)
+        if (WriteProcessMemory(pHandle, reinterpret_cast<int32_t*>(addr), &val, 4, nullptr) == 0)
         {
             std::cout << "poke failed\r\n";
         }
@@ -184,9 +183,9 @@ namespace mem_scan
      * \param addr Base address
      * \param val New value
      */
-    void pokeInt64(HANDLE pHandle, int dataSize, intptr_t addr, int64_t val)
+    void pokeInt64(HANDLE pHandle, intptr_t addr, int64_t val)
     {
-        if (WriteProcessMemory(pHandle, reinterpret_cast<int64_t*>(addr), &val, dataSize, nullptr) == 0)
+        if (WriteProcessMemory(pHandle, reinterpret_cast<int64_t*>(addr), &val, 8, nullptr) == 0)
         {
             std::cout << "poke failed\r\n";
         }

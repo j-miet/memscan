@@ -14,10 +14,10 @@ namespace mem_scan
                             int64_t val, 
                             Condition condition);
     void updateMemBlockInt(MemBlock* mb, Condition condition, int64_t val);
-    void pokeInt8(HANDLE pHandle, int dataSize, intptr_t addr, int8_t val);
-    void pokeInt16(HANDLE pHandle, int dataSize, intptr_t addr, int16_t val);
-    void pokeInt32(HANDLE pHandle, int dataSize, intptr_t addr, int32_t val);
-    void pokeInt64(HANDLE pHandle, int dataSize, intptr_t addr, int64_t val);
+    void pokeInt8(HANDLE pHandle, intptr_t addr, int8_t val);
+    void pokeInt16(HANDLE pHandle, intptr_t addr, int16_t val);
+    void pokeInt32(HANDLE pHandle, intptr_t addr, int32_t val);
+    void pokeInt64(HANDLE pHandle, intptr_t addr, int64_t val);
     int64_t peekInt(HANDLE pHandle, int dataSize, intptr_t addr);
 
 
