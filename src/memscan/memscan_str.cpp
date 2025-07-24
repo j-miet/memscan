@@ -14,27 +14,27 @@ namespace mem_scan
                                int bytesRead, 
                                int totalRead, 
                                int dataSize, 
-                               char tempBuf[], 
+                               char* tempBuf, 
                                char* val, 
                                Condition condition)
     {
         uint32_t offset;
         
-        for (offset = 0; offset < bytesRead; offset += dataSize) 
+        for (offset = 0; offset < bytesRead; offset += 1) 
         {
-            bool isMatch = false;
+            bool isMatch;
             if (mem_scan::isInSearch(mb, (totalRead+offset)))
             {
                 switch (condition) 
                 {
                     case COND_EQUALS:
-                        isMatch = (memcmp(&tempBuf[offset], val, mb->dataSize) == 0);
+                        isMatch = (std::memcmp(&tempBuf[offset], val, mb->dataSize) == 0);
                         break;
                     case COND_INCREASED:
-                        isMatch = (memcmp(&tempBuf[offset], val, mb->dataSize) > 0);
+                        isMatch = (std::memcmp(&tempBuf[offset], val, mb->dataSize) > 0);
                         break;
                     case COND_DECREASED:
-                        isMatch = (memcmp(&tempBuf[offset], val, mb->dataSize) < 0);
+                        isMatch = (std::memcmp(&tempBuf[offset], val, mb->dataSize) < 0);
                         break;
                     default:
                         break;
@@ -43,6 +43,7 @@ namespace mem_scan
                 if (isMatch) 
                 {
                     mb->matches++;
+                    offset = offset + mb->dataSize;
                 } 
                 else
                 {
@@ -54,7 +55,7 @@ namespace mem_scan
 
     void updateMemBlockString(mem_scan::MemBlock* mb, mem_scan::Condition condition, char* val)
     {
-        char tempBuf[1024*128];
+        char tempBuf[1000*mb->dataSize];
         int bytesLeft;
         int totalRead;
         int bytesToRead;
@@ -104,19 +105,19 @@ namespace mem_scan
         }
     }
 
-    void pokeString(HANDLE pHandle, intptr_t addr, const char* val)
+    void pokeString(HANDLE pHandle, uintptr_t addr, char* val, int size)
     {
-        if (WriteProcessMemory(pHandle, reinterpret_cast<intptr_t*>(addr), val, sizeof(val), nullptr) == 0)
+        if (WriteProcessMemory(pHandle, reinterpret_cast<uintptr_t*>(addr), val, size, nullptr) == 0)
         {
             std::cout << "poke failed\r\n";
         }
     }
 
-    char* peekString(HANDLE pHandle, intptr_t addr)
+    char* peekString(HANDLE pHandle, uintptr_t addr, int size)
     {
         static char val[32];
 
-	    if (ReadProcessMemory(pHandle, reinterpret_cast<intptr_t*>(addr), val, sizeof(val)+1, nullptr) == 0)
+	    if (ReadProcessMemory(pHandle, reinterpret_cast<uintptr_t*>(addr), val, size, nullptr) == 0)
         {
             std::cout << "peek failed\r\n";
         }
