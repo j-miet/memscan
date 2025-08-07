@@ -1,9 +1,6 @@
 #pragma once
 #include "memblock.hpp"
 
-#include <handleapi.h>
-
-#include <cstdint>
 #include <string>
 
 /**
@@ -16,14 +13,14 @@ class StringScanner
         StringScanner(std::vector<MemBlock> memblocks);
         ~StringScanner();
 
+        void updateScan(Condition condition, std::string val);
+        void writeString(uintptr_t addr, std::string val);
+        std::string readString(uintptr_t addr, int size);
+
               HANDLE&                pHandle()         { return m_pHandle; }
         const HANDLE&                pHandle()   const { return m_pHandle; }
               std::vector<MemBlock>& memblocks()       { return m_memblocks; }
         const std::vector<MemBlock>& memblocks() const { return m_memblocks; }
-
-        void updateScan(Condition condition, std::string val);
-        void writeString(uintptr_t addr, std::string val);
-        std::string readString(uintptr_t addr, int size);
 
     private:
         HANDLE m_pHandle;
