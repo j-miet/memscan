@@ -1,9 +1,7 @@
 #pragma once
 #include <handleapi.h>
 
-#include <array>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 // this is closely tied to MemBlock, but is still required elsewhere. Thus it cannot be part of MemBlock.
@@ -26,6 +24,10 @@ class MemBlock
     public:
         MemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo, int dataSize);
 
+        bool isInSearch(int offset);
+        bool static checkPage(int32_t protectCond);
+        void removeFromSearch(int offset);
+
               HANDLE&            pHandle()          { return m_pHandle; }
         const HANDLE&            pHandle()    const { return m_pHandle; }
               char*              addr()             { return m_addr; }
@@ -40,10 +42,6 @@ class MemBlock
         const int&               matches()    const { return m_matches; }
               int&               dataSize()         { return m_dataSize; }
         const int&               dataSize()   const { return m_dataSize; }
-
-        bool isInSearch(int offset);
-        bool static checkPage(int32_t protectCond);
-        void removeFromSearch(int offset);
 
         const static inline std::vector<int> writable {PAGE_READWRITE, PAGE_WRITECOPY, PAGE_EXECUTE_READWRITE,        
                                                        PAGE_EXECUTE_WRITECOPY};
