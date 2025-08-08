@@ -112,30 +112,30 @@ void StringScanner::updateMemBlock(MemBlock& mb, Condition condition, std::strin
 }
 
 void StringScanner::updateScan(Condition condition, std::string val) 
+{
+    for (auto& mb : m_memblocks)
     {
-        for (auto& mb : m_memblocks)
-        {
-            updateMemBlock(mb, condition, val);
-        }
+        updateMemBlock(mb, condition, val);
     }
+}
 
 void StringScanner::writeString(uintptr_t addr, std::string val)
+{
+    int size = val.size();
+    if (!WriteProcessMemory(m_pHandle, reinterpret_cast<uintptr_t*>(addr), &val[0], size, nullptr))
     {
-        int size = val.size();
-        if (WriteProcessMemory(m_pHandle, reinterpret_cast<uintptr_t*>(addr), &val[0], size, nullptr) == 0)
-        {
-            std::cout << "poke failed\r\n";
-        }
+        std::cout << "writing failed\r\n";
     }
+}
 
 std::string StringScanner::readString(uintptr_t addr, int size)
 {
     std::string strBuffer;
     strBuffer.resize(size);
 
-    if (ReadProcessMemory(m_pHandle, reinterpret_cast<uintptr_t*>(addr), &strBuffer[0], size, nullptr) == 0)
+    if (!ReadProcessMemory(m_pHandle, reinterpret_cast<uintptr_t*>(addr), &strBuffer[0], size, nullptr))
     {
-        std::cout << "peek failed\r\n";
+        std::cout << "reading failed\r\n";
     }
 
     return strBuffer;
