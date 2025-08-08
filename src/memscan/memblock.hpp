@@ -24,8 +24,8 @@ class MemBlock
     public:
         MemBlock(HANDLE pHandle, MEMORY_BASIC_INFORMATION* memInfo, int dataSize);
 
-        bool isInSearch(int offset);
         bool static checkPage(int32_t protectCond);
+        bool isInSearch(int offset);
         void removeFromSearch(int offset);
 
               HANDLE&            pHandle()          { return m_pHandle; }
