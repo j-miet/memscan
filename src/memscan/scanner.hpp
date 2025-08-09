@@ -14,8 +14,8 @@ class Scanner
         StringScanner createStringScanner(Condition startCondition);
         IntScanner createIntScanner(Condition startCondition);
 
-        int openStringUi(StringScanner stringScanner);
-        //int openIntUi(IntScanner intScanner);
+        int openStringUi(StringScanner& stringScanner);
+        int openIntUi(IntScanner& intScanner);
 
         const bool&      isString()       const { return m_isString; }
         const Condition& startCondition() const { return m_startCondition; }
@@ -28,13 +28,11 @@ class Scanner
         bool m_isString;
             
         std::vector<MemBlock> createScan(int processId, int dataSize);
-        int getMatchesCount(std::vector<MemBlock> mbScan);
-        int stringToInt(std::string s);
+        int getMatchesCount(std::vector<MemBlock>& mbScan);
+        long long stringToInt(std::string s);
 
-        void uiPrintStringMatches(StringScanner strScanner, int size);
-        void uiWriteString(StringScanner strScanner);
-        /*
-        void uiPrintIntMatches(IntScanner intScanner);
-        void uiWriteInt(IntScanner intScanner)
-        */
+        void uiPrintStringMatches(StringScanner& strScanner, int size);
+        void uiWriteString(StringScanner& strScanner);
+        void uiPrintIntMatches(IntScanner& intScanner);
+        void uiWriteInt(IntScanner& intScanner);
 };
