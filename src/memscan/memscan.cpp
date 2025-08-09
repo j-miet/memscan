@@ -18,7 +18,7 @@ int main()
         else
         {
             IntScanner intScan = scanner.createIntScanner(scanner.startCondition());
-            //scanner.openIntUi(intScan);
+            returnCode = scanner.openIntUi(intScan);
         }
     }
     
